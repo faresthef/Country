@@ -58,10 +58,14 @@ def mentalism():
     country_input = data.get("country", "")
     translated_country = detect_and_translate(country_input)
     generated_list = generate_country_list(translated_country)
-    
+
+    # Convertir la liste en texte pour MysterySmith
+    list_as_text = ", ".join(generated_list)
+
     return jsonify({
         "translated_country": translated_country,
-        "generated_list": generated_list
+        "generated_list": generated_list,
+        "formatted_list": list_as_text  # Ajout pour MysterySmith
     })
 
 if __name__ == '__main__':
