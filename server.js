@@ -3,10 +3,9 @@ const cors = require('cors');
 const stringSimilarity = require('string-similarity');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
 app.use(cors());
-app.use(express.json());
 
 const countryMap = {
   "afghanistan": "Afghanistan", "albania": "Albanie", "algeria": "Algérie", "andorra": "Andorre", "angola": "Angola",
@@ -54,61 +53,90 @@ const countryMap = {
   "zimbabwe": "Zimbabwe"
 };
 
-let lastResult = null;
+const colors = ["noire", "blanche", "rouge", "bleu", "jaune", "verte", "grise", "violette", "orange", "emeraude"];
+const animals = ["chat", "chien", "éléphant", "lion", "tigre", "singe", "poisson", "oiseau", "serpent", "grenouille"];
+const objects = ["voiture", "maison", "livre", "stylo", "ordinateur", "chaise", "table", "montre", "lampe", "téléphone"];
 
-function calculateResult(input) {
-  if (!input) return null;
+let lastResult = "";
 
-  const inputNormalized = input.toLowerCase().trim();
-
-  const keys = Object.keys(countryMap);
-  const { bestMatch } = stringSimilarity.findBestMatch(inputNormalized, keys);
-
-  if (bestMatch.rating < 0.4) {
-    return null;
+function shuffleArray(arr) {
+  for (let i = arr.length -1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i+1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
-
-  if (bestMatch.target === "israel") {
-    return null;
-  }
-
-  const detectedCountry = countryMap[bestMatch.target];
-  const initial = detectedCountry[0].toUpperCase();
-
-  const suggestions = Object.entries(countryMap)
-    .filter(([key, name]) => key !== "israel" && name[0].toUpperCase() === initial)
-    .map(([_, name]) => name);
-
-  let resultText = `Pays détecté : ${detectedCountry}\nSuggestions avec la même initiale (${initial}) :\n`;
-  suggestions.forEach(s => {
-    resultText += `- ${s}\n`;
-  });
-
-  return resultText;
+  return arr;
 }
 
-// Endpoint POST /pays : reçoit { input: "nom du pays" } et calcule la liste (stockée)
-app.post('/pays', (req, res) => {
-  const { input } = req.body;
-
-  const result = calculateResult(input);
-
-  if (!result) {
-    return res.status(404).json({ error: "Aucun pays correspondant ou pays interdit." });
+app.get('/pays', (req, res) => {
+  const input = req.query.input?.toLowerCase()?.trim();
+  if (!input) {
+    return res.status(400).send("Paramètre 'input' manquant");
   }
 
-  lastResult = result;
-  res.json({ message: "Pays reçu et liste calculée." });
+  const keys = Object.keys(countryMap);
+  const { bestMatch } = stringSimilarity.findBestMatch(input, keys);
+  let detected = countryMap[bestMatch.target] || null;
+
+  // Exclure Israël
+  if (detected && detected.toLowerCase().includes("israël")) {
+    detected = null;
+  }
+  if (!detected) {
+    return res.status(404).send("Pays non trouvé");
+  }
+
+  // Lettre initiale
+  const firstLetter = detected[0].toLowerCase();
+
+  // Filtrer pays par initiale (exclure Israël)
+  const countriesByLetter = Object.values(countryMap).filter(c => 
+    c.toLowerCase().startsWith(firstLetter) && !c.toLowerCase().includes("israël")
+  );
+
+  // Filtrer couleurs, animaux et objets par initiale (si possible)
+  const filteredColors = colors.filter(w => w[0].toLowerCase() === firstLetter);
+  const filteredAnimals = animals.filter(w => w[0].toLowerCase() === firstLetter);
+  const filteredObjects = objects.filter(w => w[0].toLowerCase() === firstLetter);
+
+  // S'il n'y a pas assez de mots pour le mélange, on complète avec des mots aléatoires
+  function takeOrRandom(arr, n) {
+    if (arr.length >= n) return arr.slice(0, n);
+    const copy = [...arr];
+    while (copy.length < n) {
+      copy.push(arr[Math.floor(Math.random() * arr.length)]);
+    }
+    return copy;
+  }
+
+  const mixCountries = takeOrRandom(countriesByLetter, 3);
+  const mixColors = takeOrRandom(filteredColors.length ? filteredColors : colors, 2);
+  const mixAnimals = takeOrRandom(filteredAnimals.length ? filteredAnimals : animals, 2);
+  const mixObjects = takeOrRandom(filteredObjects.length ? filteredObjects : objects, 2);
+
+  // Créer la liste finale et mélanger
+  let finalList = [...mixCountries, ...mixColors, ...mixAnimals, ...mixObjects];
+  finalList = shuffleArray(finalList);
+
+  // On s'assure que le pays détecté soit dans la liste
+  if (!finalList.includes(detected)) {
+    finalList[0] = detected;
+  }
+
+  lastResult = `${detected} : ${finalList.join(", ")}`;
+
+  res.json({
+    detected,
+    list: finalList
+  });
 });
 
-// Endpoint GET /final : renvoie la liste texte du dernier calcul
 app.get('/final', (req, res) => {
   if (!lastResult) {
-    return res.status(204).send();
+    return res.status(404).send("Aucun résultat généré pour l'instant");
   }
   res.type('text/plain').send(lastResult);
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
