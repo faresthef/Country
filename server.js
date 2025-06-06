@@ -3,7 +3,7 @@ const cors = require('cors');
 const stringSimilarity = require('string-similarity');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
@@ -56,40 +56,59 @@ const countryMap = {
 
 let lastResult = null;
 
-app.use(cors());
-app.use(express.json());
+function calculateResult(input) {
+  if (!input) return null;
 
-// Endpoint GET qui calcule et stocke le résultat (ne renvoie rien)
-app.get('/api/calc-result', (req, res) => {
-  const total = parseInt(req.query.total, 10);
-  if (isNaN(total)) {
-    return res.status(400).send('Paramètre total manquant ou non valide');
+  const inputNormalized = input.toLowerCase().trim();
+
+  const keys = Object.keys(countryMap);
+  const { bestMatch } = stringSimilarity.findBestMatch(inputNormalized, keys);
+
+  if (bestMatch.rating < 0.4) {
+    return null;
   }
 
-  // Exemple : chercher un pays dont la longueur du nom correspond au total
-  const found = Object.entries(countryMap)
-    .filter(([key]) => key !== 'israel')  // exclure israel
-    .find(([_, name]) => name.length === total);
-
-  if (!found) {
-    lastResult = `Aucun pays trouvé avec une longueur de nom égale à ${total}.`;
-  } else {
-    const [key, name] = found;
-    lastResult = `Résultat pour total ${total} : pays trouvé - ${name}`;
+  if (bestMatch.target === "israel") {
+    return null;
   }
 
-  return res.status(204).send();
+  const detectedCountry = countryMap[bestMatch.target];
+  const initial = detectedCountry[0].toUpperCase();
+
+  const suggestions = Object.entries(countryMap)
+    .filter(([key, name]) => key !== "israel" && name[0].toUpperCase() === initial)
+    .map(([_, name]) => name);
+
+  let resultText = `Pays détecté : ${detectedCountry}\nSuggestions avec la même initiale (${initial}) :\n`;
+  suggestions.forEach(s => {
+    resultText += `- ${s}\n`;
+  });
+
+  return resultText;
+}
+
+// Endpoint POST /pays : reçoit { input: "nom du pays" } et calcule la liste (stockée)
+app.post('/pays', (req, res) => {
+  const { input } = req.body;
+
+  const result = calculateResult(input);
+
+  if (!result) {
+    return res.status(404).json({ error: "Aucun pays correspondant ou pays interdit." });
+  }
+
+  lastResult = result;
+  res.json({ message: "Pays reçu et liste calculée." });
 });
 
-// Endpoint GET qui renvoie le dernier résultat stocké
-app.get('/api/get-result', (req, res) => {
+// Endpoint GET /final : renvoie la liste texte du dernier calcul
+app.get('/final', (req, res) => {
   if (!lastResult) {
-    return res.status(404).send('Aucun résultat calculé pour le moment.');
+    return res.status(204).send();
   }
-  res.set('Content-Type', 'text/plain');
-  return res.send(lastResult);
+  res.type('text/plain').send(lastResult);
 });
 
 app.listen(PORT, () => {
-  console.log(`API listening at http://localhost:${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
