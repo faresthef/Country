@@ -3,10 +3,13 @@ const cors = require('cors');
 const stringSimilarity = require('string-similarity');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
+// --- Data ---
+
+// Country dictionary (key: English lowercase, value: French name)
 const countryMap = {
   "afghanistan": "Afghanistan", "albania": "Albanie", "algeria": "Algérie", "andorra": "Andorre", "angola": "Angola",
   "argentina": "Argentine", "armenia": "Arménie", "australia": "Australie", "austria": "Autriche", "azerbaijan": "Azerbaïdjan",
@@ -36,7 +39,7 @@ const countryMap = {
   "north korea": "Corée du Nord", "north macedonia": "Macédoine du Nord", "norway": "Norvège", "oman": "Oman",
   "pakistan": "Pakistan", "palau": "Palaos", "panama": "Panama", "papua new guinea": "Papouasie-Nouvelle-Guinée",
   "paraguay": "Paraguay", "peru": "Pérou", "philippines": "Philippines", "poland": "Pologne", "portugal": "Portugal",
-  "qatar": "Qatar", "romania": "Roumanie", "russia": "Russie", "rwanda": "Rwanda",
+  "qatar": "Qatar", "québec": "Québec", "romania": "Roumanie", "russia": "Russie", "rwanda": "Rwanda",
   "saint kitts and nevis": "Saint-Christophe-et-Niévès", "saint lucia": "Sainte-Lucie",
   "saint vincent and the grenadines": "Saint-Vincent-et-les-Grenadines", "samoa": "Samoa", "san marino": "Saint-Marin",
   "sao tome and principe": "Sao Tomé-et-Principe", "saudi arabia": "Arabie saoudite", "senegal": "Sénégal", "serbia": "Serbie",
@@ -53,90 +56,159 @@ const countryMap = {
   "zimbabwe": "Zimbabwe"
 };
 
-const colors = ["noire", "blanche", "rouge", "bleu", "jaune", "verte", "grise", "violette", "orange", "emeraude"];
-const animals = ["chat", "chien", "éléphant", "lion", "tigre", "singe", "poisson", "oiseau", "serpent", "grenouille"];
-const objects = ["voiture", "maison", "livre", "stylo", "ordinateur", "chaise", "table", "montre", "lampe", "téléphone"];
+// Colors, animals and objects mapped by first letter (French)
+const wordCategories = {
+  // Countries, Colors, Animals, Objects - mixed by letter
+  A: ["Algérie", "Ananas", "Autruche", "Ambre"], // Exemple, tu ajoutes d'autres
+  B: ["Belgique", "Bleu", "Baleine", "Boussole"],
+  C: ["Canada", "Cyan", "Chat", "Clé"],
+  D: ["Danemark", "Doré", "Dauphin", "Dé"],
+  E: ["Espagne", "Émeraude", "Éléphant", "Écharpe"],
+  F: ["France", "Fuchsia", "Faucon", "Fleur"],
+  G: ["Grèce", "Gris", "Girafe", "Guitare"],
+  H: ["Hongrie", "Héliotrope", "Hérisson", "Hamac"],
+  I: ["Inde", "Ivoire", "Impala", "Igloo"],
+  J: ["Japon", "Jade", "Jaguar", "Jumelles"],
+  K: ["Kenya", "Kaki", "Koala", "Klaxon"],
+  L: ["Liban", "Lavande", "Lézard", "Lampe"],
+  M: ["Maroc", "Mauve", "Manchot", "Miroir"],
+  N: ["Niger", "Noir", "Narval", "Nappe"],
+  O: ["Oman", "Orange", "Ours", "Oreille"],
+  P: ["Portugal", "Pourpre", "Panda", "Parapluie"],
+  Q: ["Québec", "Quartz", "Quetzal", "Queue"],
+  R: ["Roumanie", "Rouge", "Renard", "Robe"],
+  S: ["Suède", "Sable", "Serpent", "Soleil"],
+  T: ["Tunisie", "Turquoise", "Tortue", "Table"], // On exclut Tunisie lors de la génération
+  U: ["Ukraine", "Ultramarine", "Urubu", "Urne"],
+  V: ["Vietnam", "Violet", "Vautour", "Voiture"],
+  W: ["Washington", "Wasabi", "Wapiti", "Wagon"],
+  X: ["Xiamen", "Xérès", "Xérus", "Xylophone"],
+  Y: ["Yémen", "Yaourt", "Yack", "Yoyo"],
+  Z: ["Zambie", "Zinnia", "Zèbre", "Zéro"]
+};
 
-let lastResult = "";
+// To exclude detected country and "Tunisie"
+const excludeWords = ["Tunisie", "tunisie"];
 
-function shuffleArray(arr) {
-  for (let i = arr.length -1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i+1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+// Memory for last generated list
+let lastGeneratedList = "";
+
+// Helper: find best country match (fuzzy)
+function detectCountry(input) {
+  if (!input) return null;
+  const inputLower = input.toLowerCase();
+
+  // Try exact match first
+  if (countryMap[inputLower]) return countryMap[inputLower];
+
+  // Try fuzzy match by similarity
+  const keys = Object.keys(countryMap);
+  let bestMatch = null;
+  let bestScore = 0;
+
+  for (const key of keys) {
+    const score = stringSimilarity.compareTwoStrings(inputLower, key);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = key;
+    }
   }
-  return arr;
+
+  // Threshold to accept match
+  if (bestScore > 0.5) return countryMap[bestMatch];
+
+  return null;
 }
 
-app.get('/pays', (req, res) => {
-  const input = req.query.input?.toLowerCase()?.trim();
-  if (!input) {
-    return res.status(400).send("Paramètre 'input' manquant");
-  }
+// Helper: choose one unique word from category by letter excluding banned words and used words
+function pickUniqueWord(letter, usedWords, detectedCountry) {
+  const uppercaseLetter = letter.toUpperCase();
 
-  const keys = Object.keys(countryMap);
-  const { bestMatch } = stringSimilarity.findBestMatch(input, keys);
-  let detected = countryMap[bestMatch.target] || null;
-
-  // Exclure Israël
-  if (detected && detected.toLowerCase().includes("israël")) {
-    detected = null;
-  }
-  if (!detected) {
-    return res.status(404).send("Pays non trouvé");
-  }
-
-  // Lettre initiale
-  const firstLetter = detected[0].toLowerCase();
-
-  // Filtrer pays par initiale (exclure Israël)
-  const countriesByLetter = Object.values(countryMap).filter(c => 
-    c.toLowerCase().startsWith(firstLetter) && !c.toLowerCase().includes("israël")
+  const possibleWords = wordCategories[uppercaseLetter]?.filter(w =>
+    !excludeWords.includes(w) &&
+    w.toLowerCase() !== detectedCountry.toLowerCase() &&
+    !usedWords.includes(w)
   );
 
-  // Filtrer couleurs, animaux et objets par initiale (si possible)
-  const filteredColors = colors.filter(w => w[0].toLowerCase() === firstLetter);
-  const filteredAnimals = animals.filter(w => w[0].toLowerCase() === firstLetter);
-  const filteredObjects = objects.filter(w => w[0].toLowerCase() === firstLetter);
+  if (!possibleWords || possibleWords.length === 0) {
+    // fallback: return letter itself if no word found
+    return letter;
+  }
 
-  // S'il n'y a pas assez de mots pour le mélange, on complète avec des mots aléatoires
-  function takeOrRandom(arr, n) {
-    if (arr.length >= n) return arr.slice(0, n);
-    const copy = [...arr];
-    while (copy.length < n) {
-      copy.push(arr[Math.floor(Math.random() * arr.length)]);
+  // Pick random word from possibleWords
+  const choice = possibleWords[Math.floor(Math.random() * possibleWords.length)];
+  return choice;
+}
+
+// API endpoint to receive input country (plain text param "input")
+app.get('/pays', (req, res) => {
+  const input = req.query.input;
+
+  if (!input) {
+    return res.status(400).send("Missing 'input' query parameter");
+  }
+
+  // Detect and translate country
+  let detectedCountry = detectCountry(input);
+
+  if (!detectedCountry) {
+    return res.status(404).send("Pays non reconnu");
+  }
+
+  // Special rule for Qatar => Québec as first letter
+  if (detectedCountry.toLowerCase() === "qatar") {
+    detectedCountry = "Qatar"; // Keep normal for now
+  }
+
+  // Generate list based on detected country letters
+  const letters = detectedCountry.normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(""); // remove accents for matching keys
+
+  let usedWords = [];
+  let resultList = [];
+
+  // If country is Qatar, first letter "Q" must be Québec
+  if (detectedCountry.toLowerCase() === "qatar") {
+    resultList.push("Québec");
+    usedWords.push("Québec");
+    letters.shift(); // remove first Q from letters since Québec added
+  }
+
+  for (const letter of letters) {
+    // Special letters rules
+    if (letter.toUpperCase() === "W") {
+      resultList.push("Washington");
+      usedWords.push("Washington");
+      continue;
     }
-    return copy;
+    if (letter.toUpperCase() === "X") {
+      resultList.push("Xiamen");
+      usedWords.push("Xiamen");
+      continue;
+    }
+
+    // Pick unique word for letter
+    const word = pickUniqueWord(letter, usedWords, detectedCountry);
+    resultList.push(word);
+    usedWords.push(word);
   }
 
-  const mixCountries = takeOrRandom(countriesByLetter, 3);
-  const mixColors = takeOrRandom(filteredColors.length ? filteredColors : colors, 2);
-  const mixAnimals = takeOrRandom(filteredAnimals.length ? filteredAnimals : animals, 2);
-  const mixObjects = takeOrRandom(filteredObjects.length ? filteredObjects : objects, 2);
+  // Save last generated list (join with commas)
+  lastGeneratedList = resultList.join(", ");
 
-  // Créer la liste finale et mélanger
-  let finalList = [...mixCountries, ...mixColors, ...mixAnimals, ...mixObjects];
-  finalList = shuffleArray(finalList);
-
-  // On s'assure que le pays détecté soit dans la liste
-  if (!finalList.includes(detected)) {
-    finalList[0] = detected;
-  }
-
-  lastResult = `${detected} : ${finalList.join(", ")}`;
-
-  res.json({
-    detected,
-    list: finalList
-  });
+  // Respond 204 No Content
+  return res.status(204).send();
 });
 
+// Endpoint to get the last generated list as plain text
 app.get('/final', (req, res) => {
-  if (!lastResult) {
-    return res.status(404).send("Aucun résultat généré pour l'instant");
+  if (!lastGeneratedList) {
+    return res.status(204).send("No data generated yet");
   }
-  res.type('text/plain').send(lastResult);
+  res.type('text/plain');
+  return res.send(lastGeneratedList);
 });
 
+// Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
