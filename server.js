@@ -54,34 +54,40 @@ const countryMap = {
   "zimbabwe": "Zimbabwe"
 };
 
-app.post('/api/guess-country', (req, res) => {
-  const input = req.body.input?.toLowerCase()?.trim();
+let lastResult = null;
 
-  if (!input) {
-    return res.status(400).json({ error: "No input provided." });
+app.use(cors());
+app.use(express.json());
+
+// Endpoint GET qui calcule et stocke le résultat (ne renvoie rien)
+app.get('/api/calc-result', (req, res) => {
+  const total = parseInt(req.query.total, 10);
+  if (isNaN(total)) {
+    return res.status(400).send('Paramètre total manquant ou non valide');
   }
 
-  const keys = Object.keys(countryMap);
-  const { bestMatch } = stringSimilarity.findBestMatch(input, keys);
+  // Exemple : chercher un pays dont la longueur du nom correspond au total
+  const found = Object.entries(countryMap)
+    .filter(([key]) => key !== 'israel')  // exclure israel
+    .find(([_, name]) => name.length === total);
 
-  if (bestMatch.rating < 0.4) {
-    return res.status(404).json({ error: "No country match found." });
+  if (!found) {
+    lastResult = `Aucun pays trouvé avec une longueur de nom égale à ${total}.`;
+  } else {
+    const [key, name] = found;
+    lastResult = `Résultat pour total ${total} : pays trouvé - ${name}`;
   }
 
-  const detectedCountryKey = bestMatch.target;
+  return res.status(204).send();
+});
 
-  if (detectedCountryKey === "israel") {
-    return res.status(404).json({ error: "Country not allowed." });
+// Endpoint GET qui renvoie le dernier résultat stocké
+app.get('/api/get-result', (req, res) => {
+  if (!lastResult) {
+    return res.status(404).send('Aucun résultat calculé pour le moment.');
   }
-
-  const detectedCountry = countryMap[detectedCountryKey];
-  const initials = detectedCountry[0].toUpperCase();
-
-  const suggestions = Object.entries(countryMap)
-    .filter(([key, name]) => key !== "israel" && name[0].toUpperCase() === initials)
-    .map(([_, name]) => name);
-
-  res.json({ detected: detectedCountry, suggestions });
+  res.set('Content-Type', 'text/plain');
+  return res.send(lastResult);
 });
 
 app.listen(PORT, () => {
